@@ -1,0 +1,13 @@
+<component name="libraryTable">
+  <library name="Maven: org.apache.tomcat:tomcat-annotations-api:7.0.104">
+    <CLASSES>
+      <root url="jar://D:/maven/mavenrepository/org/apache/tomcat/tomcat-annotations-api/7.0.104/tomcat-annotations-api-7.0.104.jar!/" />
+    </CLASSES>
+    <JAVADOC>
+      <root url="jar://D:/maven/mavenrepository/org/apache/tomcat/tomcat-annotations-api/7.0.104/tomcat-annotations-api-7.0.104-javadoc.jar!/" />
+    </JAVADOC>
+    <SOURCES>
+      <root url="jar://D:/maven/mavenrepository/org/apache/tomcat/tomcat-annotations-api/7.0.104/tomcat-annotations-api-7.0.104-sources.jar!/" />
+    </SOURCES>
+  </library>
+</component>
