@@ -124,7 +124,11 @@ public class RedissonLock extends RedissonExpirable implements RLock {
     public RedissonLock(CommandAsyncExecutor commandExecutor, String name) {
         super(commandExecutor, name);
         this.commandExecutor = commandExecutor;
+        //UUID
         this.id = commandExecutor.getConnectionManager().getId();
+        //看门狗时间，30s
+        //看门狗机制：监控持有锁的客户端（当前代码也正是加锁动作）是否存活着，
+        //如果活着那么看门狗就不断延长锁过期时间，这样可以防止客户端崩溃了但是重启后导致另外客户端获取锁
         this.internalLockLeaseTime = commandExecutor.getConnectionManager().getCfg().getLockWatchdogTimeout();
         this.entryName = id + ":" + name;
         this.pubSub = commandExecutor.getConnectionManager().getSubscribeService().getLockPubSub();
@@ -145,6 +149,7 @@ public class RedissonLock extends RedissonExpirable implements RLock {
     @Override
     public void lock() {
         try {
+            //leaseTime默认-1，表示获取锁成功永久持有锁，否则过期时间默认是30s
             lock(-1, null, false);
         } catch (InterruptedException e) {
             throw new IllegalStateException();
@@ -243,8 +248,11 @@ public class RedissonLock extends RedissonExpirable implements RLock {
 
     private <T> RFuture<Long> tryAcquireAsync(long waitTime, long leaseTime, TimeUnit unit, long threadId) {
         if (leaseTime != -1) {
+            //不等于-1就是代表自定义了过期时间
             return tryLockInnerAsync(waitTime, leaseTime, unit, threadId, RedisCommands.EVAL_LONG);
         }
+        //当前锁剩余 过期时间
+        //默认就是30s过期
         RFuture<Long> ttlRemainingFuture = tryLockInnerAsync(waitTime, internalLockLeaseTime,
                                                                 TimeUnit.MILLISECONDS, threadId, RedisCommands.EVAL_LONG);
         ttlRemainingFuture.onComplete((ttlRemaining, e) -> {
@@ -345,6 +353,8 @@ public class RedissonLock extends RedissonExpirable implements RLock {
 
     protected <T> RFuture<T> evalWriteAsync(String key, Codec codec, RedisCommand<T> evalCommandType, String script, List<Object> keys, Object... params) {
         CommandBatchService executorService = createCommandBatchService();
+        //执行lua脚本
+        //选择一个slot来执行脚本
         RFuture<T> result = executorService.evalWriteAsync(key, codec, evalCommandType, script, keys, params);
         if (commandExecutor instanceof CommandBatchService) {
             return result;
@@ -366,6 +376,30 @@ public class RedissonLock extends RedissonExpirable implements RLock {
     <T> RFuture<T> tryLockInnerAsync(long waitTime, long leaseTime, TimeUnit unit, long threadId, RedisStrictCommand<T> command) {
         internalLockLeaseTime = unit.toMillis(leaseTime);
 
+        // Collections.singletonList(getName()) 就是你在 getLock("anyLock")中传入的参数，也是 KEY 列表
+        // internalLockLeaseTime, getLockName(threadId) 这两个参数是 Object... params 对应 ARGV 列表
+        // KEYS列表 ==> Collections.singletonList(getName()) 第一个参数
+        // ARGV列表 ==> internalLockLeaseTime（ARGV[1]）, getLockName(threadId)（ARGV[2]）两个参数
+
+        // (redis.call('exists', KEYS[1]) == 0) then  ==> 判断 anyLock 是否有这个key存在
+        // redis.call('hincrby', KEYS[1], ARGV[2], 1) ==> anyLock 的一个map   之前是hset指令，后面是hincrby，这是可重入锁
+        // anyLock :{
+        //  “lockState”: 1,
+        //  “otherKey”: “otherValue”
+        //  }
+        // redis.call('pexpire', KEYS[1], ARGV[1]) ==> 设置 anyLock 过期时间
+        // 可以看出来是默认的-1时，这个key的过期时间就是 internalLockLeaseTime === 30s ARGV[1]
+        // 不是-1就代表自定义了过期时间
+
+        // (redis.call('hexists', KEYS[1], ARGV[2]) == 1  ===>存在这个key时，并且name也对的上，也就是当前线程再次拿锁---可重入锁
+        // redis.call('hincrby', KEYS[1], ARGV[2], 1);  ===> 加1，表示可重入
+        // redis.call('pexpire', KEYS[1], ARGV[1]); ===>把延时时间加上 ARGV[1]==internalLockLeaseTime（默认30s）
+        // redis.call('pttl', KEYS[1]) ===> 返回这个key的剩余过期时间
+
+        //总结：默认lock方法代表锁默认30s过期，并且这个锁支持可重入，否则按照你传入的时间过期
+        //当同一线程再次尝试拿锁时，此时过期时间累加 internalLockLeaseTime == 30s
+        //返回当前key的剩余过期时间
+        //其实 map 中的 value（ARGV[2]）值就是 id+threadId == UUID + 当前线程id（比如 1 ）  这个也可以说明当前线程可重入
         return evalWriteAsync(getName(), LongCodec.INSTANCE, command,
                 "if (redis.call('exists', KEYS[1]) == 0) then " +
                         "redis.call('hincrby', KEYS[1], ARGV[2], 1); " +

@@ -20,6 +20,10 @@ package org.redisson.command;
  * @author Nikita Koksharov
  *
  */
+
+/**
+ * 连接redis后执行命令的执行器
+ */
 public interface CommandExecutor extends CommandSyncExecutor, CommandAsyncExecutor {
 
 }

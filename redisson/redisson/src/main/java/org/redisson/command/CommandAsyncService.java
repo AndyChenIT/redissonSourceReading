@@ -353,6 +353,7 @@ public class CommandAsyncService implements CommandAsyncExecutor {
     }
 
     private NodeSource getNodeSource(String key) {
+        //计算slot
         int slot = connectionManager.calcSlot(key);
         return new NodeSource(slot);
     }
