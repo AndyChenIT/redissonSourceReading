@@ -179,11 +179,13 @@ public class RedissonPromise<T> extends CompletableFuture<T> implements RPromise
     @Override
     public void onComplete(BiConsumer<? super T, ? super Throwable> action) {
         promise.addListener(f -> {
+            //加锁失败，直接返回，不执行
             if (!f.isSuccess()) {
                 action.accept(null, f.cause());
                 return;
             }
-            
+
+            //加锁成功
             action.accept((T) f.getNow(), null);
         });
     }

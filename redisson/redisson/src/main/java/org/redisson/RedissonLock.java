@@ -110,7 +110,8 @@ public class RedissonLock extends RedissonExpirable implements RLock {
     }
     
     private static final Logger log = LoggerFactory.getLogger(RedissonLock.class);
-    
+
+    //这个map中的数据就代表持有锁的客户端，当lua脚本执行失败也就是没有锁的时候就从这个map去除
     private static final ConcurrentMap<String, ExpirationEntry> EXPIRATION_RENEWAL_MAP = new ConcurrentHashMap<>();
     protected long internalLockLeaseTime;
 
@@ -130,6 +131,7 @@ public class RedissonLock extends RedissonExpirable implements RLock {
         //看门狗机制：监控持有锁的客户端（当前代码也正是加锁动作）是否存活着，
         //如果活着那么看门狗就不断延长锁过期时间，这样可以防止客户端崩溃了但是重启后导致另外客户端获取锁
         this.internalLockLeaseTime = commandExecutor.getConnectionManager().getCfg().getLockWatchdogTimeout();
+        // UUID + 'anyLock'
         this.entryName = id + ":" + name;
         this.pubSub = commandExecutor.getConnectionManager().getSubscribeService().getLockPubSub();
     }
@@ -178,6 +180,7 @@ public class RedissonLock extends RedissonExpirable implements RLock {
 
     private void lock(long leaseTime, TimeUnit unit, boolean interruptibly) throws InterruptedException {
         long threadId = Thread.currentThread().getId();
+        //剩余过期时间
         Long ttl = tryAcquire(-1, leaseTime, unit, threadId);
         // lock acquired
         if (ttl == null) {
@@ -256,12 +259,20 @@ public class RedissonLock extends RedissonExpirable implements RLock {
         RFuture<Long> ttlRemainingFuture = tryLockInnerAsync(waitTime, internalLockLeaseTime,
                                                                 TimeUnit.MILLISECONDS, threadId, RedisCommands.EVAL_LONG);
         ttlRemainingFuture.onComplete((ttlRemaining, e) -> {
+            //这里是null的原因在于lua脚本执行的时候成功返回 nil
+            //这里代码是加锁失败的逻辑，此时 传参为 null, f.cause()
+            //加锁失败也就是别的客户端持有锁
             if (e != null) {
                 return;
             }
 
+            //这里是加锁成功的逻辑，此时传参是 f.getNow(), null
+            //也就是 ttlRemaining 是null，这里也可以看出来lua脚本执行的细节，执行成功返回的值其实是 null
             // lock acquired
             if (ttlRemaining == null) {
+                //开启一个定时调度的任务，只要这个锁还被客户端持有着，那么就不会不断的去延长那个key的生存周期
+                //客户端只要不手动释放锁，那么我就一直延长过期时间
+                //所谓的延长过期时间就是 pexpire 命令更新过期时间为30s，然后延迟定时任务，只要一直持有锁，就一直延迟10s不断执行刷新更新时间
                 scheduleExpirationRenewal(threadId);
             }
         });
@@ -290,22 +301,26 @@ public class RedissonLock extends RedissonExpirable implements RLock {
                 if (threadId == null) {
                     return;
                 }
-                
+
+                //更新过期时间为30s
                 RFuture<Boolean> future = renewExpirationAsync(threadId);
                 future.onComplete((res, e) -> {
+                    //客户端没有锁了，直接移除+返回
                     if (e != null) {
                         log.error("Can't update lock " + getName() + " expiration", e);
                         EXPIRATION_RENEWAL_MAP.remove(getEntryName());
                         return;
                     }
-                    
+
+                    //执行成功
                     if (res) {
                         // reschedule itself
+                        //再次执行，延迟定时任务
                         renewExpiration();
                     }
                 });
             }
-        }, internalLockLeaseTime / 3, TimeUnit.MILLISECONDS);
+        }, internalLockLeaseTime / 3, TimeUnit.MILLISECONDS);//成功加锁后，看门狗后续每隔10s去把过期时间重置为30s
         
         ee.setTimeout(task);
     }
@@ -321,7 +336,12 @@ public class RedissonLock extends RedissonExpirable implements RLock {
         }
     }
 
+    /**
+     * 更新过期时间
+     */
     protected RFuture<Boolean> renewExpirationAsync(long threadId) {
+        //看是否 getName() 还存在这个key的map
+        // pexpire 重新设置过期时间是 internalLockLeaseTime （30s）
         return evalWriteAsync(getName(), LongCodec.INSTANCE, RedisCommands.EVAL_BOOLEAN,
                 "if (redis.call('hexists', KEYS[1], ARGV[2]) == 1) then " +
                         "redis.call('pexpire', KEYS[1], ARGV[1]); " +
@@ -393,12 +413,12 @@ public class RedissonLock extends RedissonExpirable implements RLock {
 
         // (redis.call('hexists', KEYS[1], ARGV[2]) == 1  ===>存在这个key时，并且name也对的上，也就是当前线程再次拿锁---可重入锁
         // redis.call('hincrby', KEYS[1], ARGV[2], 1);  ===> 加1，表示可重入
-        // redis.call('pexpire', KEYS[1], ARGV[1]); ===>把延时时间加上 ARGV[1]==internalLockLeaseTime（默认30s）
+        // redis.call('pexpire', KEYS[1], ARGV[1]); ===>把过期重新设置为 ARGV[1]==internalLockLeaseTime（默认30s）
         // redis.call('pttl', KEYS[1]) ===> 返回这个key的剩余过期时间
 
         //总结：默认lock方法代表锁默认30s过期，并且这个锁支持可重入，否则按照你传入的时间过期
         //当同一线程再次尝试拿锁时，此时过期时间累加 internalLockLeaseTime == 30s
-        //返回当前key的剩余过期时间
+        //如果加锁成功，返回nil，否则别的客户端持有锁，那么返回当前key的剩余过期时间
         //其实 map 中的 value（ARGV[2]）值就是 id+threadId == UUID + 当前线程id（比如 1 ）  这个也可以说明当前线程可重入
         return evalWriteAsync(getName(), LongCodec.INSTANCE, command,
                 "if (redis.call('exists', KEYS[1]) == 0) then " +
