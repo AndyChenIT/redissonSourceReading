@@ -256,6 +256,7 @@ public class RedissonLock extends RedissonExpirable implements RLock {
     private <T> RFuture<Long> tryAcquireAsync(long waitTime, long leaseTime, TimeUnit unit, long threadId) {
         if (leaseTime != -1) {
             //不等于-1就是代表自定义了过期时间
+            //此时会直接返回，可以看到并不会执行下面代码，也就是不会加看门狗机制，自定义的过期时间到了就直接超时掉
             return tryLockInnerAsync(waitTime, leaseTime, unit, threadId, RedisCommands.EVAL_LONG);
         }
         //当前锁剩余 过期时间
@@ -459,19 +460,27 @@ public class RedissonLock extends RedissonExpirable implements RLock {
         return RedissonPromise.newSucceededFuture(null);
     }
 
+    /**
+     * @param waitTime 获取锁最大等待时间
+     * @param leaseTime 获取锁后锁的超时时间
+     */
     @Override
     public boolean tryLock(long waitTime, long leaseTime, TimeUnit unit) throws InterruptedException {
+        //获取锁最大等待时间
         long time = unit.toMillis(waitTime);
         long current = System.currentTimeMillis();
         long threadId = Thread.currentThread().getId();
         Long ttl = tryAcquire(waitTime, leaseTime, unit, threadId);
         // lock acquired
         if (ttl == null) {
+            //ttl是null表示获取成功
             return true;
         }
-        
+
+        //剩余最多等待时间（相当于获取锁耗费了多长时间）
         time -= System.currentTimeMillis() - current;
         if (time <= 0) {
+            //标记获取失败
             acquireFailed(waitTime, unit, threadId);
             return false;
         }
@@ -491,12 +500,14 @@ public class RedissonLock extends RedissonExpirable implements RLock {
         }
 
         try {
+            //再次减去上面的步骤耗时
             time -= System.currentTimeMillis() - current;
             if (time <= 0) {
                 acquireFailed(waitTime, unit, threadId);
                 return false;
             }
-        
+
+            //倘若一直获取失败，那么一直循环获取并且减去耗时，知道获取成功或者超时
             while (true) {
                 long currentTime = System.currentTimeMillis();
                 ttl = tryAcquire(waitTime, leaseTime, unit, threadId);
