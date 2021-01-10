@@ -183,9 +183,11 @@ public class RedissonLock extends RedissonExpirable implements RLock {
         //剩余过期时间
         Long ttl = tryAcquire(-1, leaseTime, unit, threadId);
         // lock acquired
+        // ttl 返回null表示加锁成功
         if (ttl == null) {
             return;
         }
+        //走到这里来表示加锁不成功，下面其实就是 while(true) 逻辑
 
         RFuture<RedissonLockEntry> future = subscribe(threadId);
         if (interruptibly) {
@@ -196,8 +198,10 @@ public class RedissonLock extends RedissonExpirable implements RLock {
 
         try {
             while (true) {
+                //再次执行
                 ttl = tryAcquire(-1, leaseTime, unit, threadId);
                 // lock acquired
+                //获取锁成功，break退出死循环
                 if (ttl == null) {
                     break;
                 }
@@ -543,6 +547,7 @@ public class RedissonLock extends RedissonExpirable implements RLock {
     @Override
     public void unlock() {
         try {
+            //里面 unlockAsync 方法是异步化的 get()后则是同步，相当于异步转同步
             get(unlockAsync(Thread.currentThread().getId()));
         } catch (RedisException e) {
             if (e.getCause() instanceof IllegalMonitorStateException) {
@@ -636,6 +641,19 @@ public class RedissonLock extends RedissonExpirable implements RLock {
     }
 
     protected RFuture<Boolean> unlockInnerAsync(long threadId) {
+        //脚本代码逻辑：
+
+        //看当前 是否有 'anyLock' 的 map 并且有key 为 UUID + threadId
+        //不存在返回nil
+
+        //存在，表示当前有客户端持有锁
+        //对重入次数减一，然后算一下还有多少重入次数
+
+        //倘若还有重入次数，刷新过期时间为 internalLockLeaseTime （30s）
+        //返回0
+
+        //没有重入次数，直接删除 anyLock
+        //发布 UNLOCK_MESSAGE 订阅消息
         return evalWriteAsync(getName(), LongCodec.INSTANCE, RedisCommands.EVAL_BOOLEAN,
                 "if (redis.call('hexists', KEYS[1], ARGV[3]) == 0) then " +
                         "return nil;" +
@@ -656,6 +674,7 @@ public class RedissonLock extends RedissonExpirable implements RLock {
     @Override
     public RFuture<Void> unlockAsync(long threadId) {
         RPromise<Void> result = new RedissonPromise<Void>();
+        //执行lua脚本
         RFuture<Boolean> future = unlockInnerAsync(threadId);
 
         future.onComplete((opStatus, e) -> {
