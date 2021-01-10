@@ -371,7 +371,8 @@ public class RedissonMultiLock implements RLock {
             remainTime = unit.toMillis(waitTime);
         }
         long lockWaitTime = calcLockWaitTime(remainTime);
-        
+
+        //允许的加锁失败数量
         int failedLocksLimit = failedLocksLimit();
         List<RLock> acquiredLocks = new ArrayList<>(locks.size());
         for (ListIterator<RLock> iterator = locks.listIterator(); iterator.hasNext();) {
@@ -398,7 +399,9 @@ public class RedissonMultiLock implements RLock {
                     break;
                 }
 
-                if (failedLocksLimit == 0) {
+                //如果只是MultiLock，会走这个代码，表示任何一个锁都不能加锁失败
+                //如果是RedLock，是允许部分锁获取失败的，这里代码不会执行
+                if (failedLocksLimit == 0) {//将所有加的锁都释放掉
                     unlockInner(acquiredLocks);
                     if (waitTime == -1) {
                         return false;
@@ -410,11 +413,14 @@ public class RedissonMultiLock implements RLock {
                         iterator.previous();
                     }
                 } else {
+                    //在这里减1，表示第一次加锁失败是允许一些锁失败，扣减允许加锁失败的数量减1
                     failedLocksLimit--;
                 }
             }
-            
+
+            //超时，所以直接释放
             if (remainTime != -1) {
+                //这里就是 remainTime 减去了一次获取锁的耗时
                 remainTime -= System.currentTimeMillis() - time;
                 time = System.currentTimeMillis();
                 if (remainTime <= 0) {

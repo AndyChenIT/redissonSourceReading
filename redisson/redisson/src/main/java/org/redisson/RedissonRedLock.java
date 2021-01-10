@@ -28,6 +28,10 @@ import org.redisson.api.RLock;
  * @author Nikita Koksharov
  *
  */
+
+/**
+ * 主要通过方法的重载改变MultiLock的行为
+ */
 public class RedissonRedLock extends RedissonMultiLock {
 
     /**
@@ -44,11 +48,15 @@ public class RedissonRedLock extends RedissonMultiLock {
     protected int failedLocksLimit() {
         return locks.size() - minLocksAmount(locks);
     }
-    
+
+    //大多数节点：size/2 + 1
     protected int minLocksAmount(final List<RLock> locks) {
         return locks.size()/2 + 1;
     }
 
+    /**
+     * 每个lock进行加锁的时候获取加锁的超时时间是 remainTime / locks.size()
+     */
     @Override
     protected long calcLockWaitTime(long remainTime) {
         return Math.max(remainTime / locks.size(), 1);
