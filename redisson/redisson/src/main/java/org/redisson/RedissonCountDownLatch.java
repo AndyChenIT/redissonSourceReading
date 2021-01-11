@@ -285,8 +285,8 @@ public class RedissonCountDownLatch extends RedissonObject implements RCountDown
     @Override
     public RFuture<Void> countDownAsync() {
         return commandExecutor.evalWriteAsync(getName(), LongCodec.INSTANCE, RedisCommands.EVAL_BOOLEAN,
-                        "local v = redis.call('decr', KEYS[1]);" +
-                        "if v <= 0 then redis.call('del', KEYS[1]) end;" +
+                        "local v = redis.call('decr', KEYS[1]);" +                //decr anyCountDownLatch
+                        "if v <= 0 then redis.call('del', KEYS[1]) end;" +              //小于等于0了就直接删除 anyCountDownLatch
                         "if v == 0 then redis.call('publish', KEYS[2], ARGV[1]) end;",
                     Arrays.<Object>asList(getName(), getChannelName()), CountDownLatchPubSub.ZERO_COUNT_MESSAGE);
     }
@@ -318,7 +318,7 @@ public class RedissonCountDownLatch extends RedissonObject implements RCountDown
     public RFuture<Boolean> trySetCountAsync(long count) {
         return commandExecutor.evalWriteAsync(getName(), LongCodec.INSTANCE, RedisCommands.EVAL_BOOLEAN,
                 "if redis.call('exists', KEYS[1]) == 0 then "
-                    + "redis.call('set', KEYS[1], ARGV[2]); "
+                    + "redis.call('set', KEYS[1], ARGV[2]); "      //set anyCountDownLatch 3
                     + "redis.call('publish', KEYS[2], ARGV[1]); "
                     + "return 1 "
                 + "else "

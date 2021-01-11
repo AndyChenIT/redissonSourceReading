@@ -72,6 +72,10 @@ public class RedissonSemaphore extends RedissonExpirable implements RSemaphore {
         acquire(1);
     }
 
+    /**
+     *
+     * @param permits 1 一个客户端来获取锁
+     */
     @Override
     public void acquire(int permits) throws InterruptedException {
         if (tryAcquire(permits)) {
@@ -81,6 +85,7 @@ public class RedissonSemaphore extends RedissonExpirable implements RSemaphore {
         RFuture<RedissonLockEntry> future = subscribe();
         commandExecutor.syncSubscriptionInterrupted(future);
         try {
+            //拿不到锁就死循环
             while (true) {
                 if (tryAcquire(permits)) {
                     return;
@@ -265,13 +270,13 @@ public class RedissonSemaphore extends RedissonExpirable implements RSemaphore {
         }
 
         return commandExecutor.evalWriteAsync(getName(), LongCodec.INSTANCE, RedisCommands.EVAL_BOOLEAN,
-                  "local value = redis.call('get', KEYS[1]); " +
-                  "if (value ~= false and tonumber(value) >= tonumber(ARGV[1])) then " +
-                      "local val = redis.call('decrby', KEYS[1], ARGV[1]); " +
+                  "local value = redis.call('get', KEYS[1]); " +                    //get anySemaphore
+                  "if (value ~= false and tonumber(value) >= tonumber(ARGV[1])) then " +  //3>1 ,允许3个客户端获取锁，现在才1个过来，后面变成0后就不会允许客户端来加锁了
+                      "local val = redis.call('decrby', KEYS[1], ARGV[1]); " +            //decrby anySemaphore 1
                       "return 1; " +
                   "end; " +
                   "return 0;",
-                  Collections.<Object>singletonList(getName()), permits);
+                  Collections.<Object>singletonList(getName()), permits);//ARGV: permits
     }
 
     @Override
@@ -437,7 +442,7 @@ public class RedissonSemaphore extends RedissonExpirable implements RSemaphore {
         }
 
         return commandExecutor.evalWriteAsync(getName(), StringCodec.INSTANCE, RedisCommands.EVAL_VOID,
-            "local value = redis.call('incrby', KEYS[1], ARGV[1]); " +
+            "local value = redis.call('incrby', KEYS[1], ARGV[1]); " +    //incrby anySemaphore 1  释放锁就是累加1
             "redis.call('publish', KEYS[2], value); ",
             Arrays.<Object>asList(getName(), getChannelName()), permits);
     }
@@ -477,9 +482,9 @@ public class RedissonSemaphore extends RedissonExpirable implements RSemaphore {
     @Override
     public RFuture<Boolean> trySetPermitsAsync(int permits) {
         return commandExecutor.evalWriteAsync(getName(), LongCodec.INSTANCE, RedisCommands.EVAL_BOOLEAN,
-                "local value = redis.call('get', KEYS[1]); " +
+                "local value = redis.call('get', KEYS[1]); " +     //get anySemaphore
                 "if (value == false or value == 0) then "
-                    + "redis.call('set', KEYS[1], ARGV[1]); "
+                    + "redis.call('set', KEYS[1], ARGV[1]); "            //set anySemaphore 3 将这个信号量同时允许获取锁的客户量设为3
                     + "redis.call('publish', KEYS[2], ARGV[1]); "
                     + "return 1;"
                 + "end;"
