@@ -101,37 +101,45 @@ public class RedissonReadLock extends RedissonLock implements RLock {
         String timeoutPrefix = getReadWriteTimeoutNamePrefix(threadId);
         String keyPrefix = getKeyPrefix(threadId, timeoutPrefix);
 
+        //anyLock: {
+        //  “mode”: “read”,
+        //  “UUID_01:threadId_01”: 2,
+        //  “UUID_02:threadId_02”: 1
+        //}
+        //
+        //{anyLock}:UUID_01:threadId_01:rwlock_timeout:2  1  这是重入标识,比如重入了3,4,5，就分别有 timeout:3  1，timeout:4  1，timeout:5  1
+        //{anyLock}:UUID_02:threadId_02:rwlock_timeout:1  1
         return evalWriteAsync(getName(), LongCodec.INSTANCE, RedisCommands.EVAL_BOOLEAN,
-                "local mode = redis.call('hget', KEYS[1], 'mode'); " +
+                "local mode = redis.call('hget', KEYS[1], 'mode'); " +          //hget anyLock mode，mode = read
                 "if (mode == false) then " +
                     "redis.call('publish', KEYS[2], ARGV[1]); " +
                     "return 1; " +
                 "end; " +
-                "local lockExists = redis.call('hexists', KEYS[1], ARGV[2]); " +
-                "if (lockExists == 0) then " +
+                "local lockExists = redis.call('hexists', KEYS[1], ARGV[2]); " +      //hexists anyLock UUID_01:threadId_01
+                "if (lockExists == 0) then " +                                        //没有加锁直接返回
                     "return nil;" +
                 "end; " +
                     
-                "local counter = redis.call('hincrby', KEYS[1], ARGV[2], -1); " + 
-                "if (counter == 0) then " +
-                    "redis.call('hdel', KEYS[1], ARGV[2]); " + 
+                "local counter = redis.call('hincrby', KEYS[1], ARGV[2], -1); " +     //hincrby anyLock UUID_01:threadId_01 -1   加锁次数减1
+                "if (counter == 0) then " +                                           //次数为0，表示全部扣减完了
+                    "redis.call('hdel', KEYS[1], ARGV[2]); " +                        //hdel anyLock UUID_01:threadId_01
                 "end;" +
-                "redis.call('del', KEYS[3] .. ':' .. (counter+1)); " +
+                "redis.call('del', KEYS[3] .. ':' .. (counter+1)); " +                //del {anyLock}:UUID_01:threadId_01:rwlock_timeout:2
                 
-                "if (redis.call('hlen', KEYS[1]) > 1) then " +
+                "if (redis.call('hlen', KEYS[1]) > 1) then " +                        //hlen anyLock > 1
                     "local maxRemainTime = -3; " + 
                     "local keys = redis.call('hkeys', KEYS[1]); " + 
                     "for n, key in ipairs(keys) do " + 
-                        "counter = tonumber(redis.call('hget', KEYS[1], key)); " + 
+                        "counter = tonumber(redis.call('hget', KEYS[1], key)); " +    //处理value是数字的元素，也就是过滤掉 mode，这里就是处理重入次数
                         "if type(counter) == 'number' then " + 
                             "for i=counter, 1, -1 do " + 
-                                "local remainTime = redis.call('pttl', KEYS[4] .. ':' .. key .. ':rwlock_timeout:' .. i); " + 
-                                "maxRemainTime = math.max(remainTime, maxRemainTime);" + 
+                                "local remainTime = redis.call('pttl', KEYS[4] .. ':' .. key .. ':rwlock_timeout:' .. i); " +  //其实就是拿到每个key的插入==重入对应的key-value，比如 {anyLock}:UUID_02:threadId_02:rwlock_timeout:3  1
+                                "maxRemainTime = math.max(remainTime, maxRemainTime);" +  //这里就是拿到每个重入标识的剩余生存时间的最大值
                             "end; " + 
                         "end; " + 
                     "end; " +
                             
-                    "if maxRemainTime > 0 then " +
+                    "if maxRemainTime > 0 then " +                                     //这里和下面的return逻辑还有更下面的del表明如果所有key都过期了，肯定删除，如果
                         "redis.call('pexpire', KEYS[1], maxRemainTime); " +
                         "return 0; " +
                     "end;" + 
@@ -141,11 +149,11 @@ public class RedissonReadLock extends RedissonLock implements RLock {
                     "end; " +
                 "end; " +
                     
-                "redis.call('del', KEYS[1]); " +
+                "redis.call('del', KEYS[1]); " +                                         //在这里就是 hlen anyLock = 1 ，也就是只有一个客户端的一个线程持有锁，所以释放后就直接删除了
                 "redis.call('publish', KEYS[2], ARGV[1]); " +
                 "return 1; ",
-                Arrays.<Object>asList(getName(), getChannelName(), timeoutPrefix, keyPrefix), 
-                LockPubSub.UNLOCK_MESSAGE, getLockName(threadId));
+                Arrays.<Object>asList(getName(), getChannelName(), timeoutPrefix, keyPrefix), //KEYS:anyLock , redisson_rwlock:{anyLock} , {anyLock}:UUID_01:threadId_01:rwlock_timeout , {anyLock}
+                LockPubSub.UNLOCK_MESSAGE, getLockName(threadId));                       //ARGV: 0 , UUID_01:threadId_01
     }
 
     protected String getKeyPrefix(long threadId, String timeoutPrefix) {

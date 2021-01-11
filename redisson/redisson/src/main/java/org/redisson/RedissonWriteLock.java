@@ -87,6 +87,13 @@ public class RedissonWriteLock extends RedissonLock implements RLock {
 
     @Override
     protected RFuture<Boolean> unlockInnerAsync(long threadId) {
+        //anyLock: {
+        //  “mode”: “write”,
+        //  “UUID_01:threadId_01:write”: 2,
+        //  “UUID_01:threadId_01”: 1
+        //}
+        //
+        //{anyLock}:UUID_01:threadId_01:rwlock_timeout:2		1
         return evalWriteAsync(getName(), LongCodec.INSTANCE, RedisCommands.EVAL_BOOLEAN,
                 "local mode = redis.call('hget', KEYS[1], 'mode'); " +
                 "if (mode == false) then " +
@@ -98,26 +105,26 @@ public class RedissonWriteLock extends RedissonLock implements RLock {
                     "if (lockExists == 0) then " +
                         "return nil;" +
                     "else " +
-                        "local counter = redis.call('hincrby', KEYS[1], ARGV[3], -1); " +
+                        "local counter = redis.call('hincrby', KEYS[1], ARGV[3], -1); " + //可重入减1
                         "if (counter > 0) then " +
-                            "redis.call('pexpire', KEYS[1], ARGV[2]); " +
+                            "redis.call('pexpire', KEYS[1], ARGV[2]); " +                 //减1后还有客户端持有锁，更新生存时间30s，直接返回
                             "return 0; " +
                         "else " +
-                            "redis.call('hdel', KEYS[1], ARGV[3]); " +
-                            "if (redis.call('hlen', KEYS[1]) == 1) then " +
-                                "redis.call('del', KEYS[1]); " +
+                            "redis.call('hdel', KEYS[1], ARGV[3]); " +                    //没有客户端持有锁了  hdel anyLock UUID_01:threadId_01:write
+                            "if (redis.call('hlen', KEYS[1]) == 1) then " +               //检查 anyLock 还有几个元素
+                                "redis.call('del', KEYS[1]); " +                          //这里的一个是mode
                                 "redis.call('publish', KEYS[2], ARGV[1]); " + 
                             "else " +
                                 // has unlocked read-locks
-                                "redis.call('hset', KEYS[1], 'mode', 'read'); " +
+                                "redis.call('hset', KEYS[1], 'mode', 'read'); " +          //此时写锁退化成读锁
                             "end; " +
                             "return 1; "+
                         "end; " +
                     "end; " +
                 "end; "
                 + "return nil;",
-        Arrays.<Object>asList(getName(), getChannelName()), 
-        LockPubSub.READ_UNLOCK_MESSAGE, internalLockLeaseTime, getLockName(threadId));
+        Arrays.<Object>asList(getName(), getChannelName()),                                //KEYS: anyLock , redisson_rwlock:{anyLock}
+        LockPubSub.READ_UNLOCK_MESSAGE, internalLockLeaseTime, getLockName(threadId));//ARGV: 0, 30s , UUID_01:threadId_01:write
     }
     
     @Override
