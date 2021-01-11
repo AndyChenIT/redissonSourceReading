@@ -49,30 +49,40 @@ public class RedissonWriteLock extends RedissonLock implements RLock {
     protected String getLockName(long threadId) {
         return super.getLockName(threadId) + ":write";
     }
-    
+
+    /**
+     * 加写锁
+     */
     @Override
     <T> RFuture<T> tryLockInnerAsync(long waitTime, long leaseTime, TimeUnit unit, long threadId, RedisStrictCommand<T> command) {
         internalLockLeaseTime = unit.toMillis(leaseTime);
 
+        //anyLock: {
+        //  “mode”: “read”,
+        //  “UUID_01:threadId_01”: 1,
+        //  “UUID_02:threadId_02”: 1
+        //}
+        //{anyLock}:UUID_01:threadId_01:rwlock_timeout:1		1
+        //{anyLock}:UUID_02:threadId_02:rwlock_timeout:1		1
         return evalWriteAsync(getName(), LongCodec.INSTANCE, command,
-                            "local mode = redis.call('hget', KEYS[1], 'mode'); " +
+                            "local mode = redis.call('hget', KEYS[1], 'mode'); " +           //hget anyLock mode
                             "if (mode == false) then " +
-                                  "redis.call('hset', KEYS[1], 'mode', 'write'); " +
-                                  "redis.call('hset', KEYS[1], ARGV[2], 1); " +
-                                  "redis.call('pexpire', KEYS[1], ARGV[1]); " +
+                                  "redis.call('hset', KEYS[1], 'mode', 'write'); " +                //hset anyLock mode write
+                                  "redis.call('hset', KEYS[1], ARGV[2], 1); " +                     //hset anyLock UUID_01:threadId_01:write 1
+                                  "redis.call('pexpire', KEYS[1], ARGV[1]); " +                     //pexpire anyLock 30000
                                   "return nil; " +
                               "end; " +
                               "if (mode == 'write') then " +
-                                  "if (redis.call('hexists', KEYS[1], ARGV[2]) == 1) then " +
-                                      "redis.call('hincrby', KEYS[1], ARGV[2], 1); " + 
+                                  "if (redis.call('hexists', KEYS[1], ARGV[2]) == 1) then " +       //先读后写，在这里是直接不支持的，即使是同一个客户端同一个线程，加写锁之前只能没有锁
+                                      "redis.call('hincrby', KEYS[1], ARGV[2], 1); " +
                                       "local currentExpire = redis.call('pttl', KEYS[1]); " +
-                                      "redis.call('pexpire', KEYS[1], currentExpire + ARGV[1]); " +
+                                      "redis.call('pexpire', KEYS[1], currentExpire + ARGV[1]); " + //这里把过期时间延长了
                                       "return nil; " +
                                   "end; " +
                                 "end;" +
                                 "return redis.call('pttl', KEYS[1]);",
-                        Arrays.<Object>asList(getName()), 
-                        internalLockLeaseTime, getLockName(threadId));
+                        Arrays.<Object>asList(getName()),              //KEYS:anyLock
+                        internalLockLeaseTime, getLockName(threadId)); //ARGV:30s,UUID_01:threadId_01:write
     }
 
     @Override
