@@ -187,8 +187,7 @@ public class RedissonLock extends RedissonExpirable implements RLock {
         if (ttl == null) {
             return;
         }
-        //走到这里来表示加锁不成功，下面其实就是 while(true) 逻辑
-
+        // 使用redis->subscribe订阅channel，用于监听回调处理
         RFuture<RedissonLockEntry> future = subscribe(threadId);
         if (interruptibly) {
             commandExecutor.syncSubscriptionInterrupted(future);
@@ -196,6 +195,7 @@ public class RedissonLock extends RedissonExpirable implements RLock {
             commandExecutor.syncSubscription(future);
         }
 
+        // 获锁失败，则使用while循环不断获取锁的剩余过期时间ttl，然后指定Park的时间为ttl，不断循环判断
         try {
             while (true) {
                 //再次执行

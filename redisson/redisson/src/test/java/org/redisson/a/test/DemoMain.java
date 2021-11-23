@@ -11,7 +11,7 @@ public class DemoMain {
         config.useSingleServer().setAddress("redis://127.0.0.1:6379");
 
         RedissonClient redisson = Redisson.create(config);
-        RLock lock = redisson.getLock("anyLock");
+        RLock lock = redisson.getLock("l");
 
         lock.lock();
 
