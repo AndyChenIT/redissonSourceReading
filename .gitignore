@@ -1,0 +1,64 @@
+HELP.md
+.gradle
+build/
+out/
+logs/
+!gradle/wrapper/gradle-wrapper.jar
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+### STS ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+
+### IntelliJ IDEA ###
+.idea
+*.iws
+*.iml
+*.ipr
+out/
+!**/src/main/**/out/
+!**/src/test/**/out/
+
+### NetBeans ###
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+
+### VS Code ###
+.vscode/
+
+gradle/
+gradlew
+gradlew.bat
+.gitignore.bak
+/.idea/
+
+# JRebel
+**/rebel.xml
+**/rebel-remote.xml
+
+# Maven
+target/
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+pom.xml.next
+release.properties
+dependency-reduced-pom.xml
+buildNumber.properties
+.mvn/timing.properties
+
+# sourcetail
+**/mall.srctrlbm
+**/mall.srctrldb
+**/mall.srctrlprj
+**/sourcetrail_dependencies/**
+**/${project.build.directory}/
