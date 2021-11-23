@@ -19,7 +19,7 @@ logs/
 ### IntelliJ IDEA ###
 ../.idea
 *.iws
-**/*.iml
+*.iml
 *.ipr
 out/
 !**/src/main/**/out/
