@@ -252,11 +252,12 @@ public class RedissonLock extends RedissonExpirable implements RLock {
         });
         return ttlRemainingFuture;
     }
-
+    //  waitTime 表示尝试加锁失败时等待锁的时间，leaseTime表示加锁成功后等待 leaseTime 时间后释放锁。
     private <T> RFuture<Long> tryAcquireAsync(long waitTime, long leaseTime, TimeUnit unit, long threadId) {
+        //当leaseTime为-1时才启用watchdog
         if (leaseTime != -1) {
-            //不等于-1就是代表自定义了过期时间
-            //此时会直接返回，可以看到并不会执行下面代码，也就是不会加看门狗机制，自定义的过期时间到了就直接超时掉
+            //不等于-1就是代表自定义了过期时间，不启用watchdog，会直接返回，可以看到并不会执行下面代码，
+            // 也就是不会加看门狗机制，自定义的过期时间到了就直接超时掉
             return tryLockInnerAsync(waitTime, leaseTime, unit, threadId, RedisCommands.EVAL_LONG);
         }
         //当前锁剩余 过期时间

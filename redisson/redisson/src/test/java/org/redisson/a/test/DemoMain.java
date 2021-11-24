@@ -16,5 +16,7 @@ public class DemoMain {
         lock.lock();
 
         lock.unlock();
+
+        redisson.shutdown();
     }
 }
