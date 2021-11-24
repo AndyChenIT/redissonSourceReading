@@ -261,7 +261,7 @@ public class RedissonLock extends RedissonExpirable implements RLock {
             return tryLockInnerAsync(waitTime, leaseTime, unit, threadId, RedisCommands.EVAL_LONG);
         }
         //当前锁剩余 过期时间
-        //默认就是30s过期
+        //使用internalLockLeaseTime作为租期 默认30s过期
         RFuture<Long> ttlRemainingFuture = tryLockInnerAsync(waitTime, internalLockLeaseTime,
                                                                 TimeUnit.MILLISECONDS, threadId, RedisCommands.EVAL_LONG);
         ttlRemainingFuture.onComplete((ttlRemaining, e) -> {
@@ -290,6 +290,7 @@ public class RedissonLock extends RedissonExpirable implements RLock {
         return get(tryLockAsync());
     }
 
+    //延期操作
     private void renewExpiration() {
         ExpirationEntry ee = EXPIRATION_RENEWAL_MAP.get(getEntryName());
         if (ee == null) {
@@ -308,7 +309,7 @@ public class RedissonLock extends RedissonExpirable implements RLock {
                     return;
                 }
 
-                //更新过期时间为30s
+                //Lua脚本延期锁的过期时间为30s
                 RFuture<Boolean> future = renewExpirationAsync(threadId);
                 future.onComplete((res, e) -> {
                     //客户端没有锁了，直接移除+返回
@@ -318,10 +319,10 @@ public class RedissonLock extends RedissonExpirable implements RLock {
                         return;
                     }
 
-                    //执行成功
+                    //延期成功
                     if (res) {
                         // reschedule itself
-                        //再次执行，延迟定时任务
+                        // 继续循环延期操作
                         renewExpiration();
                     }
                 });
@@ -333,10 +334,13 @@ public class RedissonLock extends RedissonExpirable implements RLock {
     
     private void scheduleExpirationRenewal(long threadId) {
         ExpirationEntry entry = new ExpirationEntry();
+        //map中的key为 this.entryName = id + ":" + name
         ExpirationEntry oldEntry = EXPIRATION_RENEWAL_MAP.putIfAbsent(getEntryName(), entry);
+        //第2次以后再获取锁，不用再使用时间轮算法延期了
         if (oldEntry != null) {
             oldEntry.addThreadId(threadId);
         } else {
+            //第1次获取成功时，进行延期操作
             entry.addThreadId(threadId);
             renewExpiration();
         }
